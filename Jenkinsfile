@@ -1,46 +1,81 @@
 pipeline {
   agent any
-  options { timestamps() }
+
+  options {
+    timestamps()
+  }
+
+  environment {
+    VENV_DIR = ".venv"
+    BUILD_DIR = "build"
+    DEPLOY_DIR = "deploy_target"
+  }
 
   stages {
+
     stage('Clone Repository') {
-      steps { checkout scm }
+      steps {
+        checkout scm
+      }
     }
 
     stage('Install Dependencies') {
       steps {
-        bat '''
+        bat """
           python --version
-          python -m venv .venv
-          call .venv\\Scripts\\activate
+          python -m venv %VENV_DIR%
+          call %VENV_DIR%\\Scripts\\activate
+
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-        '''
+
+          REM Ensure pytest exists even if not in requirements.txt
+          pip install pytest
+        """
       }
     }
 
     stage('Run Unit Tests (pytest)') {
       steps {
-        bat '''
-          call .venv\\Scripts\\activate
-          pytest -q
-        '''
+        bat """
+          call %VENV_DIR%\\Scripts\\activate
+
+          REM Generate junit report so Jenkins can display test results
+          pytest -q --junitxml=pytest-report.xml
+          exit /b %ERRORLEVEL%
+        """
+      }
+      post {
+        always {
+          junit 'pytest-report.xml'
+        }
       }
     }
 
     stage('Build Application') {
       steps {
-        bat '''
-          if exist build rmdir /s /q build
-          mkdir build
+        bat """
+          if exist %BUILD_DIR% rmdir /s /q %BUILD_DIR%
+          mkdir %BUILD_DIR%
 
-          copy /Y app.py build\\
-          copy /Y requirements.txt build\\
-          xcopy /E /I /Y tests build\\tests\\
+          REM Copy key files/folders into build dir
+          if exist app.py copy /Y app.py %BUILD_DIR%\\
+          if exist requirements.txt copy /Y requirements.txt %BUILD_DIR%\\
+          if exist __init__.py copy /Y __init__.py %BUILD_DIR%\\
 
-          echo Build contents:
-          dir build
-        '''
+          REM Copy tests (optional but useful for artifact)
+          if exist tests (
+            xcopy tests %BUILD_DIR%\\tests\\ /E /I /Y
+          )
+
+          REM Copy handlers folder if it exists in your repo
+          if exist handlers (
+            xcopy handlers %BUILD_DIR%\\handlers\\ /E /I /Y
+          )
+
+          echo ==== Build contents ====
+          dir %BUILD_DIR%
+        """
       }
       post {
         success {
@@ -51,15 +86,22 @@ pipeline {
 
     stage('Deploy Application (Simulated)') {
       steps {
-        bat '''
-          if exist deploy_target rmdir /s /q deploy_target
-          mkdir deploy_target
-          xcopy /E /I /Y build deploy_target
+        bat """
+          if exist %DEPLOY_DIR% rmdir /s /q %DEPLOY_DIR%
+          mkdir %DEPLOY_DIR%
 
-          echo Deployed to workspace\\deploy_target:
-          dir deploy_target
-        '''
+          xcopy %BUILD_DIR% %DEPLOY_DIR%\\ /E /I /Y
+
+          echo ==== Deployed to workspace\\%DEPLOY_DIR% ====
+          dir %DEPLOY_DIR%
+        """
       }
+    }
+  }
+
+  post {
+    always {
+      echo "Pipeline completed (success or failure)."
     }
   }
 }
