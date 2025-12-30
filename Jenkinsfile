@@ -1,13 +1,11 @@
 pipeline {
   agent any
 
-  options {
-    timestamps()
-  }
+  options { timestamps() }
 
   environment {
-    VENV_DIR = ".venv"
-    BUILD_DIR = "build"
+    VENV_DIR   = ".venv"
+    BUILD_DIR  = "build"
     DEPLOY_DIR = "deploy_target"
   }
 
@@ -23,14 +21,16 @@ pipeline {
       steps {
         bat """
           python --version
+
+          if exist %VENV_DIR% rmdir /s /q %VENV_DIR%
           python -m venv %VENV_DIR%
           call %VENV_DIR%\\Scripts\\activate
 
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-          REM Ensure pytest exists even if not in requirements.txt
-          pip install pytest
+          REM Install THIS repository as a package so tests can import flask_pytest_example
+          pip install -e .
         """
       }
     }
@@ -39,8 +39,6 @@ pipeline {
       steps {
         bat """
           call %VENV_DIR%\\Scripts\\activate
-
-          REM Generate junit report so Jenkins can display test results
           pytest -q --junitxml=pytest-report.xml
           exit /b %ERRORLEVEL%
         """
@@ -58,19 +56,20 @@ pipeline {
           if exist %BUILD_DIR% rmdir /s /q %BUILD_DIR%
           mkdir %BUILD_DIR%
 
-          REM Copy key files/folders into build dir
+          REM Copy core files
           if exist app.py copy /Y app.py %BUILD_DIR%\\
           if exist requirements.txt copy /Y requirements.txt %BUILD_DIR%\\
+          if exist setup.py copy /Y setup.py %BUILD_DIR%\\
           if exist __init__.py copy /Y __init__.py %BUILD_DIR%\\
 
-          REM Copy tests (optional but useful for artifact)
-          if exist tests (
-            xcopy tests %BUILD_DIR%\\tests\\ /E /I /Y
+          REM Copy package folder (the important one)
+          if exist flask_pytest_example (
+            xcopy flask_pytest_example %BUILD_DIR%\\flask_pytest_example\\ /E /I /Y
           )
 
-          REM Copy handlers folder if it exists in your repo
-          if exist handlers (
-            xcopy handlers %BUILD_DIR%\\handlers\\ /E /I /Y
+          REM Copy tests (optional)
+          if exist tests (
+            xcopy tests %BUILD_DIR%\\tests\\ /E /I /Y
           )
 
           echo ==== Build contents ====
@@ -101,7 +100,7 @@ pipeline {
 
   post {
     always {
-      echo "Pipeline completed (success or failure)."
+      echo "Pipeline finished."
     }
   }
 }
